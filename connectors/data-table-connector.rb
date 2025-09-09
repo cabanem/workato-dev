@@ -98,6 +98,16 @@
   # HELPER METHODS
   # ==========================================
   methods: {
+    # Helper to robustly call connector methods in both Workato and local Ruby
+    connector_call: lambda do |context, method_name, *args, &block|
+      if context.respond_to?(:call)
+        context.call(method_name, *args, &block)
+      elsif context[:methods] && context[:methods][method_name]
+        context[:methods][method_name].call(*args, &block)
+      else
+        raise "Connector method '#{method_name}' not found in context."
+      end
+    end,
     # Global host for record APIs (not region-specific)
     records_base: lambda do |_connection|
       "https://data-tables.workato.com"
@@ -343,7 +353,7 @@
     table_columns: lambda do |connection, table_id:|
       return [] unless table_id.present?
       
-  table = (defined?(call) ? call(:execute_with_retry, connection) { get("/api/data_tables/#{table_id}") } : execute_with_retry.call(connection) { get("/api/data_tables/#{table_id}") })
+  table = self[:methods][:connector_call].call(self, :execute_with_retry, connection) { get("/api/data_tables/#{table_id}") }
       cols = table["schema"] || table.dig("data", "schema") || []
       cols.map { |col| [col["name"], col["name"]] }
     end,
@@ -633,7 +643,7 @@
       execute: lambda do |connection, input|
         params = { page: input["page"], per_page: input["per_page"] }
         params[:parent_id] = input["parent_id"] if input["parent_id"].present?
-  (defined?(call) ? call(:list_index, connection, "/api/folders", params) : list_index.call(connection, "/api/folders", params))
+  self[:methods][:connector_call].call(self, :list_index, connection, "/api/folders", params)
       rescue RestClient::ExceptionWithResponse => e
         hdrs = e.response&.headers || {}
         cid  = hdrs["x-correlation-id"] || hdrs[:x_correlation_id]
@@ -655,7 +665,7 @@
       end,
       execute: lambda do |connection, input|
         params = { page: input["page"], per_page: input["per_page"] }
-  (defined?(call) ? call(:list_index, connection, "/api/projects", params) : list_index.call(connection, "/api/projects", params))
+  self[:methods][:connector_call].call(self, :list_index, connection, "/api/projects", params)
       rescue RestClient::ExceptionWithResponse => e
         hdrs = e.response&.headers || {}
         cid  = hdrs["x-correlation-id"] || hdrs[:x_correlation_id]
@@ -724,9 +734,9 @@
         object_definitions["records_result"]
       end,
       execute: lambda do |connection, input|
-        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
+        self[:methods][:connector_call].call(self, :validate_table_id, input["table_id"])
 
-        where = (defined?(call) ? call(:build_where, input["filters"]) : build_where.call(input["filters"]))
+        where = self[:methods][:connector_call].call(self, :build_where, input["filters"])
         order = if input["order"].present? && input["order"]["column"].present?
                   { by: input["order"]["column"],
                     order: input["order"]["order"] || "asc",
@@ -742,8 +752,8 @@
           timezone_offset_secs: input["timezone_offset_secs"]
         }.compact
 
-        resp = (defined?(call) ? call(:records_query_call, connection, input["table_id"], body) : records_query_call.call(connection, input["table_id"], body))
-        (defined?(call) ? call(:normalize_records_result, connection, resp) : normalize_records_result.call(connection, resp))
+        resp = self[:methods][:connector_call].call(self, :records_query_call, connection, input["table_id"], body)
+        self[:methods][:connector_call].call(self, :normalize_records_result, connection, resp)
       rescue RestClient::ExceptionWithResponse => e
         error("Query failed: #{e.response&.body || e.message}")
       end
