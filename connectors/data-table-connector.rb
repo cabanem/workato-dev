@@ -116,7 +116,7 @@
           ra = hdrs["Retry-After"] || hdrs[:retry_after]
           delay =
             if ra.to_s =~ /^\d+$/ then ra.to_i
-            elsif ra.present?
+            elsif ra.respond_to?(:present?) ? ra.present? : !ra.nil?
               begin
                 [(Time.httpdate(ra) - Time.now).ceil, 1].max
               rescue
@@ -205,7 +205,7 @@
       params[:offset] = 0
 
       loop do
-        response = call(:execute_with_retry, connection) { get(url).params(params) }
+        response = (defined?(call) ? call(:execute_with_retry, connection) { get(url).params(params) } : execute_with_retry.call(connection) { get(url).params(params) })
         rows = response["rows"] || response["records"] || response["data"] || []
         all_results.concat(rows)
 
@@ -276,13 +276,13 @@
 
     # Try the canonical records query path, then the legacy one.
     records_query_call: lambda do |connection, table_id, body|
-      base = call(:records_base, connection)
+      base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
       primary  = "#{base}/api/v1/tables/#{table_id}/query"
       fallback = "#{base}/api/v1/tables/#{table_id}/records/query"
 
-      call(:execute_with_retry, connection) { post(primary).payload(body) }
+      (defined?(call) ? call(:execute_with_retry, connection) { post(primary).payload(body) } : execute_with_retry.call(connection) { post(primary).payload(body) })
     rescue RestClient::NotFound
-      call(:execute_with_retry, connection) { post(fallback).payload(body) }
+      (defined?(call) ? call(:execute_with_retry, connection) { post(fallback).payload(body) } : execute_with_retry.call(connection) { post(fallback).payload(body) })
     end,
 
     normalize_records_result: lambda do |_connection, resp|
@@ -309,10 +309,10 @@
 
     # Unified GET list call with retry, pagination clamping, and helpful 403 error
     list_index: lambda do |connection, path, params = {}|
-      p = call(:clamp_pagination, connection, params[:page], params[:per_page], 100)
-      q = params.merge(p).compact
-      resp = call(:execute_with_retry, connection) { get(path).params(q) }
-      call(:normalize_list_response, connection, resp)
+  p = (defined?(call) ? call(:clamp_pagination, connection, params[:page], params[:per_page], 100) : clamp_pagination.call(connection, params[:page], params[:per_page], 100))
+  q = params.merge(p).compact
+  resp = (defined?(call) ? call(:execute_with_retry, connection) { get(path).params(q) } : execute_with_retry.call(connection) { get(path).params(q) })
+  (defined?(call) ? call(:normalize_list_response, connection, resp) : normalize_list_response.call(connection, resp))
     rescue RestClient::Forbidden => e
       hdrs = e.response&.headers || {}
       cid  = hdrs["x-correlation-id"] || hdrs[:x_correlation_id]
