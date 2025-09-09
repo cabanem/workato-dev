@@ -343,7 +343,7 @@
     table_columns: lambda do |connection, table_id:|
       return [] unless table_id.present?
       
-      table = call(:execute_with_retry, connection) { get("/api/data_tables/#{table_id}") }
+  table = (defined?(call) ? call(:execute_with_retry, connection) { get("/api/data_tables/#{table_id}") } : execute_with_retry.call(connection) { get("/api/data_tables/#{table_id}") })
       cols = table["schema"] || table.dig("data", "schema") || []
       cols.map { |col| [col["name"], col["name"]] }
     end,
@@ -633,7 +633,7 @@
       execute: lambda do |connection, input|
         params = { page: input["page"], per_page: input["per_page"] }
         params[:parent_id] = input["parent_id"] if input["parent_id"].present?
-        call(:list_index, connection, "/api/folders", params)
+  (defined?(call) ? call(:list_index, connection, "/api/folders", params) : list_index.call(connection, "/api/folders", params))
       rescue RestClient::ExceptionWithResponse => e
         hdrs = e.response&.headers || {}
         cid  = hdrs["x-correlation-id"] || hdrs[:x_correlation_id]
@@ -655,7 +655,7 @@
       end,
       execute: lambda do |connection, input|
         params = { page: input["page"], per_page: input["per_page"] }
-        call(:list_index, connection, "/api/projects", params)
+  (defined?(call) ? call(:list_index, connection, "/api/projects", params) : list_index.call(connection, "/api/projects", params))
       rescue RestClient::ExceptionWithResponse => e
         hdrs = e.response&.headers || {}
         cid  = hdrs["x-correlation-id"] || hdrs[:x_correlation_id]
@@ -724,9 +724,9 @@
         object_definitions["records_result"]
       end,
       execute: lambda do |connection, input|
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        where = call(:build_where, input["filters"])
+        where = (defined?(call) ? call(:build_where, input["filters"]) : build_where.call(input["filters"]))
         order = if input["order"].present? && input["order"]["column"].present?
                   { by: input["order"]["column"],
                     order: input["order"]["order"] || "asc",
@@ -742,8 +742,8 @@
           timezone_offset_secs: input["timezone_offset_secs"]
         }.compact
 
-        resp = call(:records_query_call, connection, input["table_id"], body)
-        call(:normalize_records_result, connection, resp)
+        resp = (defined?(call) ? call(:records_query_call, connection, input["table_id"], body) : records_query_call.call(connection, input["table_id"], body))
+        (defined?(call) ? call(:normalize_records_result, connection, resp) : normalize_records_result.call(connection, resp))
       rescue RestClient::ExceptionWithResponse => e
         error("Query failed: #{e.response&.body || e.message}")
       end
@@ -767,11 +767,11 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
+        base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
         url = "#{base}/api/v1/tables/#{input['table_id']}/records"
-        result = call(:execute_with_retry, connection) { post(url).payload(input["data"]) }
+        result = (defined?(call) ? call(:execute_with_retry, connection) { post(url).payload(input["data"]) } : execute_with_retry.call(connection) { post(url).payload(input["data"]) })
         # Spec shows array reply sometimes; normalize to first element/hash
         rec = result.is_a?(Array) ? (result.first || {}) : result
         {
@@ -797,11 +797,11 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+  (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
-        url = "#{base}/api/v1/tables/#{input['table_id']}/records/#{input['record_id']}"
-        call(:execute_with_retry, connection) { put(url).payload(input["data"]) }
+  base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
+  url = "#{base}/api/v1/tables/#{input['table_id']}/records/#{input['record_id']}"
+  (defined?(call) ? call(:execute_with_retry, connection) { put(url).payload(input["data"]) } : execute_with_retry.call(connection) { put(url).payload(input["data"]) })
       end
     },
     delete_record: {
@@ -819,11 +819,11 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
+        base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
         url  = "#{base}/api/v1/tables/#{input['table_id']}/records/#{input['record_id']}"
-        resp = call(:execute_with_retry, connection) { delete(url) }
+        resp = (defined?(call) ? call(:execute_with_retry, connection) { delete(url) } : execute_with_retry.call(connection) { delete(url) })
 
         status = if resp.is_a?(Hash)
                   resp.dig("data", "status") || resp["status"]
@@ -852,9 +852,9 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
+        base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
         url = "#{base}/api/v1/tables/#{input['table_id']}/records"
 
         successes = []
@@ -862,13 +862,13 @@
 
         (input["records"] || []).each_with_index do |rec, idx|
           begin
-            res = call(:execute_with_retry, connection) { post(url).payload(rec["data"]) }
+            res = (defined?(call) ? call(:execute_with_retry, connection) { post(url).payload(rec["data"]) } : execute_with_retry.call(connection) { post(url).payload(rec["data"]) })
             successes << (res.is_a?(Array) ? (res.first || {}) : (res || {}))
 
           rescue RestClient::ExceptionWithResponse => e
-            errors << call(:make_error_hash, idx, nil, e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, nil, e) : make_error_hash.call(idx, nil, e))
           rescue => e
-            errors << call(:make_error_hash, idx, nil, e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, nil, e) : make_error_hash.call(idx, nil, e))
           end
         end
 
@@ -897,9 +897,9 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
+        base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
 
         successes = []
         errors = []
@@ -907,12 +907,12 @@
         (input["updates"] || []).each_with_index do |u, idx|
           begin
             url = "#{base}/api/v1/tables/#{input['table_id']}/records/#{u['record_id']}"
-            res = call(:execute_with_retry, connection) { put(url).payload(u["data"]) }
+            res = (defined?(call) ? call(:execute_with_retry, connection) { put(url).payload(u["data"]) } : execute_with_retry.call(connection) { put(url).payload(u["data"]) })
             successes << (res.is_a?(Array) ? (res.first || {}) : (res || {}))
           rescue RestClient::ExceptionWithResponse => e
-            errors << call(:make_error_hash, idx, u["record_id"], e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, u["record_id"], e) : make_error_hash.call(idx, u["record_id"], e))
           rescue => e
-            errors << call(:make_error_hash, idx, u["record_id"], e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, u["record_id"], e) : make_error_hash.call(idx, u["record_id"], e))
           end
         end
 
@@ -938,9 +938,9 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        base = call(:records_base, connection)
+        base = (defined?(call) ? call(:records_base, connection) : records_base.call(connection))
 
         successes = []
         errors = []
@@ -948,13 +948,13 @@
         (input["record_ids"] || []).each_with_index do |rid, idx|
           begin
             url = "#{base}/api/v1/tables/#{input['table_id']}/records/#{rid}"
-            resp = call(:execute_with_retry, connection) { delete(url) }
+            resp = (defined?(call) ? call(:execute_with_retry, connection) { delete(url) } : execute_with_retry.call(connection) { delete(url) })
             successes << { record_id: rid, status: resp.dig("data","status") || 200 }
 
           rescue RestClient::ExceptionWithResponse => e
-            errors << call(:make_error_hash, idx, rid, e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, rid, e) : make_error_hash.call(idx, rid, e))
           rescue => e
-            errors << call(:make_error_hash, idx, rid, e)
+            errors << (defined?(call) ? call(:make_error_hash, idx, rid, e) : make_error_hash.call(idx, rid, e))
           end
         end
 
@@ -1003,9 +1003,9 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
-        where = call(:build_where, input["filters"])
+        where = (defined?(call) ? call(:build_where, input["filters"]) : build_where.call(input["filters"]))
         order = if input["order"].present? && input["order"]["column"].present?
           { by: input["order"]["column"],
             order: input["order"]["order"] || "asc",
@@ -1020,8 +1020,8 @@
           timezone_offset_secs: input["timezone_offset_secs"]
         }.compact
 
-        resp = call(:records_query_call, connection, input["table_id"], body)
-        call(:normalize_records_result, connection, resp)
+        resp = (defined?(call) ? call(:records_query_call, connection, input["table_id"], body) : records_query_call.call(connection, input["table_id"], body))
+        (defined?(call) ? call(:normalize_records_result, connection, resp) : normalize_records_result.call(connection, resp))
       rescue RestClient::ExceptionWithResponse => e
         error("Query failed: #{e.response&.body || e.message}")
       end
@@ -1041,15 +1041,15 @@
       end,
       execute: lambda do |connection, input|
         # Validate table ID, fail fast if invalid
-        call(:validate_table_id, input["table_id"])
+        (defined?(call) ? call(:validate_table_id, input["table_id"]) : validate_table_id.call(input["table_id"]))
 
         body = {
           continuation_token: input["continuation_token"],
           limit: input["limit"]
         }.compact
 
-        resp = call(:records_query_call, connection, input["table_id"], body)
-        call(:normalize_records_result, connection, resp)
+        resp = (defined?(call) ? call(:records_query_call, connection, input["table_id"], body) : records_query_call.call(connection, input["table_id"], body))
+        (defined?(call) ? call(:normalize_records_result, connection, resp) : normalize_records_result.call(connection, resp))
       rescue RestClient::ExceptionWithResponse => e
         error("Next page failed: #{e.response&.body || e.message}")
       end
