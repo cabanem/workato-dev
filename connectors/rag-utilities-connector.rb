@@ -946,6 +946,332 @@
         total_embeddings: embeddings.length,
         index_endpoint: input["index_endpoint"]
       }
+    end,
+    
+    construct_rag_prompt: lambda do |input|
+      query = input["query"]
+      context_docs = input["context_documents"]
+      template = input["prompt_template"] || "standard"
+      max_length = input["max_context_length"] || 3000
+      include_metadata = input["include_metadata"] || false
+      system_instructions = input["system_instructions"]
+      
+      # Sort context by relevance
+      sorted_context = context_docs.sort_by { |doc| doc["relevance_score"] }.reverse
+      
+      # Build context string
+      context_parts = []
+      total_tokens = 0
+      
+      sorted_context.each do |doc|
+        doc_tokens = (doc["content"].length / 4.0).ceil
+        if total_tokens + doc_tokens <= max_length
+          context_part = doc["content"]
+          if include_metadata && doc["metadata"]
+            context_part += "\nMetadata: #{doc["metadata"].to_json}"
+          end
+          context_parts << context_part
+          total_tokens += doc_tokens
+        end
+      end
+      
+      context_text = context_parts.join("\n\n---\n\n")
+      
+      # Build prompt based on template
+      case template
+      when "standard"
+        prompt = "Context:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
+      when "customer_service"
+        prompt = "You are a customer service assistant. Use the following context to answer the customer's question.\n\nContext:\n#{context_text}\n\nCustomer Question: #{query}\n\nResponse:"
+      when "technical"
+        prompt = "You are a technical support specialist. Use the provided context to solve the technical issue.\n\nContext:\n#{context_text}\n\nTechnical Issue: #{query}\n\nSolution:"
+      when "sales"
+        prompt = "You are a sales representative. Use the context to address the sales inquiry.\n\nContext:\n#{context_text}\n\nSales Inquiry: #{query}\n\nResponse:"
+      else
+        prompt = "#{system_instructions}\n\nContext:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
+      end
+      
+      {
+        formatted_prompt: prompt,
+        token_count: (prompt.length / 4.0).ceil,
+        context_used: context_parts.length,
+        truncated: context_parts.length < sorted_context.length,
+        prompt_metadata: {
+          template: template,
+          context_docs_used: context_parts.length,
+          total_context_docs: sorted_context.length
+        }
+      }
+    end,
+    
+    validate_response: lambda do |input, connection|
+      response = input["response_text"]
+      query = input["original_query"]
+      rules = input["validation_rules"] || []
+      min_confidence = input["min_confidence"] || 0.7
+      
+      issues = []
+      confidence = 1.0
+      
+      # Basic validation checks
+      if response.empty?
+        issues << "Response is empty"
+        confidence -= 0.5
+      end
+      
+      if response.length < 10
+        issues << "Response is too short"
+        confidence -= 0.3
+      end
+      
+      # Check if response addresses the query
+      query_words = query.downcase.split(/\W+/)
+      response_words = response.downcase.split(/\W+/)
+      overlap = (query_words & response_words).length.to_f / query_words.length
+      
+      if overlap < 0.1
+        issues << "Response may not address the query"
+        confidence -= 0.4
+      end
+      
+      # Check for coherence
+      if response.include?("...") || response.include?("incomplete")
+        issues << "Response appears incomplete"
+        confidence -= 0.2
+      end
+      
+      # Apply custom rules
+      rules.each do |rule|
+        case rule["rule_type"]
+        when "contains"
+          unless response.include?(rule["rule_value"])
+            issues << "Response does not contain required text: #{rule["rule_value"]}"
+            confidence -= 0.3
+          end
+        when "not_contains"
+          if response.include?(rule["rule_value"])
+            issues << "Response contains prohibited text: #{rule["rule_value"]}"
+            confidence -= 0.3
+          end
+        end
+      end
+      
+      {
+        is_valid: confidence >= min_confidence,
+        confidence_score: confidence.round(2),
+        validation_results: {
+          query_overlap: overlap.round(2),
+          response_length: response.length,
+          word_count: response_words.length
+        },
+        issues_found: issues,
+        requires_human_review: confidence < 0.5,
+        suggested_improvements: issues.empty? ? [] : ["Review and improve response quality"]
+      }
+    end,
+    
+    extract_metadata: lambda do |input|
+      content = input["document_content"]
+      file_path = input["file_path"]
+      extract_entities = input["extract_entities"] || true
+      generate_summary = input["generate_summary"] || true
+      
+      start_time = Time.now
+      
+      # Basic metadata
+      word_count = content.split(/\s+/).length
+      char_count = content.length
+      estimated_tokens = (content.length / 4.0).ceil
+      
+      # Language detection (simple heuristic)
+      language = if content.match?(/[àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]/i)
+                    "non-english"
+                  else
+                    "english"
+                  end
+      
+      # Generate summary (first 200 chars)
+      summary = generate_summary ? content[0..200] + "..." : ""
+      
+      # Extract key topics (simple keyword extraction)
+      key_topics = []
+      if extract_entities
+        common_words = ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"]
+        words = content.downcase.split(/\W+/).reject { |w| w.length < 4 || common_words.include?(w) }
+        word_freq = words.each_with_object(Hash.new(0)) { |word, freq| freq[word] += 1 }
+        key_topics = word_freq.sort_by { |_, count| -count }.first(5).map(&:first)
+      end
+      
+      # Entities (placeholder)
+      entities = {
+        people: [],
+        organizations: [],
+        locations: []
+      }
+      
+      {
+        document_id: (file_path + content).hash.to_s,
+        file_hash: content.hash.to_s,
+        word_count: word_count,
+        character_count: char_count,
+        estimated_tokens: estimated_tokens,
+        language: language,
+        summary: summary,
+        key_topics: key_topics,
+        entities: entities,
+        created_at: Time.now.iso8601,
+        processing_time_ms: ((Time.now - start_time) * 1000).round
+      }
+    end,
+    
+    detect_changes: lambda do |input|
+      current_hash = input["current_hash"]
+      current_content = input["current_content"]
+      previous_hash = input["previous_hash"]
+      previous_content = input["previous_content"]
+      check_type = input["check_type"] || "hash"
+      
+      has_changed = current_hash != previous_hash
+      change_type = "none"
+      change_percentage = 0.0
+      added = []
+      removed = []
+      modified = []
+      
+      if has_changed
+        change_type = "hash_changed"
+        
+        if check_type == "content" && current_content && previous_content
+          # Simple diff
+          current_lines = current_content.split("\n")
+          previous_lines = previous_content.split("\n")
+          
+          added = current_lines - previous_lines
+          removed = previous_lines - current_lines
+          
+          total_lines = [current_lines.length, previous_lines.length].max
+          change_percentage = ((added.length + removed.length).to_f / total_lines * 100).round(2) if total_lines > 0
+          
+          change_type = "content_changed"
+        end
+      end
+      
+      {
+        has_changed: has_changed,
+        change_type: change_type,
+        change_percentage: change_percentage,
+        added_content: added,
+        removed_content: removed,
+        modified_sections: modified,
+        requires_reindexing: has_changed
+      }
+    end,
+    
+    compute_metrics: lambda do |input|
+      data_points = input["data_points"]
+      
+      values = data_points.map { |dp| dp["value"] }.sort
+      
+      return { average: 0, median: 0, min: 0, max: 0, std_deviation: 0, percentile_95: 0, percentile_99: 0, total_count: 0, trend: "stable", anomalies_detected: [] } if values.empty?
+      
+      average = values.sum.to_f / values.length
+      median = values.length.odd? ? values[values.length / 2] : (values[values.length / 2 - 1] + values[values.length / 2]) / 2.0
+      min = values.first
+      max = values.last
+      
+      # Standard deviation
+      variance = values.map { |v| (v - average)**2 }.sum / values.length
+      std_dev = Math.sqrt(variance)
+      
+      # Percentiles
+      def percentile(arr, p)
+        return 0 if arr.empty?
+        idx = (p / 100.0 * (arr.length - 1)).round
+        arr[idx]
+      end
+      
+      p95 = percentile(values, 95)
+      p99 = percentile(values, 99)
+      
+      # Trend (simple: compare first half vs second half)
+      half = values.length / 2
+      first_half_avg = values[0..half-1].sum.to_f / half
+      second_half_avg = values[half..-1].sum.to_f / (values.length - half)
+      trend = if second_half_avg > first_half_avg * 1.1
+                "increasing"
+              elsif second_half_avg < first_half_avg * 0.9
+                "decreasing"
+              else
+                "stable"
+              end
+      
+      # Anomalies (simple: beyond 2 std dev)
+      anomalies = data_points.select { |dp| (dp["value"] - average).abs > 2 * std_dev }.map { |dp| { timestamp: dp["timestamp"], value: dp["value"] } }
+      
+      {
+        average: average.round(2),
+        median: median.round(2),
+        min: min,
+        max: max,
+        std_deviation: std_dev.round(2),
+        percentile_95: p95.round(2),
+        percentile_99: p99.round(2),
+        total_count: values.length,
+        trend: trend,
+        anomalies_detected: anomalies
+      }
+    end,
+    
+    calculate_optimal_batch: lambda do |input|
+      total_items = input["total_items"]
+      history = input["processing_history"] || []
+      target = input["optimization_target"] || "throughput"
+      max_batch = input["max_batch_size"] || 100
+      min_batch = input["min_batch_size"] || 10
+      
+      if history.empty?
+        optimal = [total_items / 10, max_batch].min
+        optimal = [optimal, min_batch].max
+        return {
+          optimal_batch_size: optimal,
+          estimated_batches: (total_items.to_f / optimal).ceil,
+          estimated_processing_time: nil,
+          throughput_estimate: nil,
+          confidence_score: 0.5,
+          recommendation_reason: "No history available, using default calculation"
+        }
+      end
+      
+      # Simple optimization based on history
+      case target
+      when "throughput"
+        # Maximize items per second
+        best = history.max_by { |h| h["batch_size"].to_f / h["processing_time"] }
+        optimal = best["batch_size"]
+      when "latency"
+        # Minimize processing time per item
+        best = history.min_by { |h| h["processing_time"].to_f / h["batch_size"] }
+        optimal = best["batch_size"]
+      else
+        optimal = history.map { |h| h["batch_size"] }.sum / history.length
+      end
+      
+      optimal = [optimal, max_batch].min
+      optimal = [optimal, min_batch].max
+      
+      estimated_batches = (total_items.to_f / optimal).ceil
+      avg_time = history.map { |h| h["processing_time"] }.sum / history.length
+      estimated_time = avg_time * estimated_batches
+      throughput = total_items.to_f / estimated_time
+      
+      {
+        optimal_batch_size: optimal,
+        estimated_batches: estimated_batches,
+        estimated_processing_time: estimated_time.round(2),
+        throughput_estimate: throughput.round(2),
+        confidence_score: 0.8,
+        recommendation_reason: "Based on historical performance data"
+      }
     end
   },
   
