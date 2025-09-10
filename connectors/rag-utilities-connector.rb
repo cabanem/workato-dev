@@ -14,37 +14,44 @@
         hint: "Select the environment for the connector",
         optional: false,
         control_type: "select",
-        pick_list: "environments"
+        # Use options (not pick_list) inside connection
+        options: [
+          ["Development", "dev"],
+          ["Staging", "staging"],
+          ["Production", "prod"]
+        ]
       },
       {
         name: "chunk_size_default",
         label: "Default Chunk Size",
         hint: "Default token size for text chunks",
         optional: true,
-        default: "1000",
-        control_type: "number"
+        type: "integer",
+        control_type: "integer",
+        default: 1000
       },
       {
         name: "chunk_overlap_default",
         label: "Default Chunk Overlap",
         hint: "Default token overlap between chunks",
         optional: true,
-        default: "100",
-        control_type: "number"
+        type: "integer",
+        control_type: "integer",
+        default: 100
       },
       {
         name: "similarity_threshold",
         label: "Similarity Threshold",
-        hint: "Minimum similarity score (0-1)",
+        hint: "Minimum similarity score (0–1)",
         optional: true,
-        default: "0.7",
-        control_type: "number"
+        type: "number",
+        control_type: "number",
+        default: 0.7
       }
     ],
     
     authorization: {
       type: "custom_auth",
-      
       apply: lambda do |connection|
         headers("X-Environment": connection["environment"])
       end
@@ -74,51 +81,17 @@
       title: "Smart Chunk Text",
       subtitle: "Intelligently chunk text preserving context",
       description: "Splits text into chunks with smart boundaries and overlap",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "text",
-            label: "Input Text",
-            type: "string",
-            optional: false,
-            control_type: "text-area"
-          },
-          {
-            name: "chunk_size",
-            label: "Chunk Size (tokens)",
-            type: "integer",
-            optional: true,
-            default: 1000,
-            hint: "Maximum tokens per chunk"
-          },
-          {
-            name: "chunk_overlap",
-            label: "Chunk Overlap (tokens)",
-            type: "integer",
-            optional: true,
-            default: 100,
-            hint: "Token overlap between chunks"
-          },
-          {
-            name: "preserve_sentences",
-            label: "Preserve Sentences",
-            type: "boolean",
-            optional: true,
-            default: true,
-            hint: "Don't break mid-sentence"
-          },
-          {
-            name: "preserve_paragraphs",
-            label: "Preserve Paragraphs",
-            type: "boolean",
-            optional: true,
-            default: false,
-            hint: "Try to keep paragraphs intact"
-          }
+          { name: "text", label: "Input Text", type: "string", optional: false, control_type: "text-area" },
+          { name: "chunk_size", label: "Chunk Size (tokens)", type: "integer", optional: true, default: 1000, hint: "Maximum tokens per chunk" },
+          { name: "chunk_overlap", label: "Chunk Overlap (tokens)", type: "integer", optional: true, default: 100, hint: "Token overlap between chunks" },
+          { name: "preserve_sentences", label: "Preserve Sentences", type: "boolean", optional: true, default: true, hint: "Don't break mid-sentence" },
+          { name: "preserve_paragraphs", label: "Preserve Paragraphs", type: "boolean", optional: true, default: false, hint: "Try to keep paragraphs intact" }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           {
@@ -135,18 +108,15 @@
               { name: "metadata", type: "object" }
             ]
           },
-          {
-            name: "total_chunks",
-            type: "integer"
-          },
-          {
-            name: "total_tokens",
-            type: "integer"
-          }
+          { name: "total_chunks", type: "integer" },
+          { name: "total_tokens", type: "integer" }
         ]
       end,
-      
+
       execute: lambda do |connection, input|
+        # Fallback to connection defaults if not provided
+        input["chunk_size"] ||= (connection["chunk_size_default"] || 1000).to_i
+        input["chunk_overlap"] ||= (connection["chunk_overlap_default"] || 100).to_i
         call(:chunk_text_with_overlap, input)
       end
     },
