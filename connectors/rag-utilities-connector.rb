@@ -493,31 +493,40 @@
   # METHODS (Helper Functions)
   # ==========================================
   methods: {
-    
     chunk_text_with_overlap: lambda do |input|
-      text = input["text"]
-      chunk_size = input["chunk_size"] || 1000
-      overlap = input["chunk_overlap"] || 100
-      
+      text = input["text"] || ""
+      chunk_size = (input["chunk_size"] || 1000).to_i
+      overlap = (input["chunk_overlap"] || 100).to_i
+      preserve_sentences = !!input["preserve_sentences"]
+      preserve_paragraphs = !!input["preserve_paragraphs"]
+
       # Token estimation (rough: 1 token ≈ 4 chars)
-      chars_per_chunk = chunk_size * 4
-      char_overlap = overlap * 4
-      
+      chars_per_chunk = [chunk_size, 1].max * 4
+      char_overlap = [[overlap, 0].max, chunk_size].min * 4
+
       chunks = []
       chunk_index = 0
       position = 0
-      
+
       while position < text.length
-        chunk_end = [position + chars_per_chunk, text.length].min
-        
-        # Find sentence boundary if requested
-        if input["preserve_sentences"] && chunk_end < text.length
-          last_period = text[position..chunk_end].rindex(/[.!?]\s/)
-          chunk_end = position + last_period + 1 if last_period
+        tentative_end = [position + chars_per_chunk, text.length].min
+        chunk_end = tentative_end
+
+        # Prefer paragraph boundary (double newline)
+        if preserve_paragraphs && tentative_end < text.length
+          rel = text[position...tentative_end].rindex(/\n{2,}/)
+          chunk_end = position + rel + 1 if rel
         end
-        
-        chunk_text = text[position..chunk_end-1]
-        
+
+        # Then sentence boundary
+        if preserve_sentences && chunk_end == tentative_end && tentative_end < text.length
+          rel = text[position...tentative_end].rindex(/[.!?]["')\]]?\s/)
+          chunk_end = position + rel + 1 if rel
+        end
+
+        chunk_end = tentative_end if chunk_end <= position # ensure forward progress
+        chunk_text = text[position...chunk_end]
+
         chunks << {
           chunk_id: "chunk_#{chunk_index}",
           chunk_index: chunk_index,
@@ -525,73 +534,78 @@
           token_count: (chunk_text.length / 4.0).ceil,
           start_char: position,
           end_char: chunk_end,
-          metadata: {
-            has_overlap: chunk_index > 0,
-            is_final: chunk_end >= text.length
-          }
+          metadata: { has_overlap: chunk_index > 0, is_final: chunk_end >= text.length }
         }
-        
-        position = chunk_end - char_overlap
-        position = chunk_end if position >= text.length
+
+        break if chunk_end >= text.length
+        position = [chunk_end - char_overlap, 0].max
         chunk_index += 1
       end
-      
+
       {
         chunks: chunks,
         total_chunks: chunks.length,
         total_tokens: chunks.sum { |c| c[:token_count] }
       }
     end,
-    
+
     process_email_text: lambda do |input|
-      text = input["email_body"]
-      original_length = text.length
-      cleaned = text.dup
+      cleaned = (input["email_body"] || "").dup
+      original_length = cleaned.length
       removed_sections = []
       extracted_urls = []
-      
-      # Remove email signatures
+
+      # Normalize line endings early
+      cleaned.gsub!("\r\n", "\n")
+
+      # Signatures (keep patterns generous but bounded)
       if input["remove_signatures"]
         signature_patterns = [
-          /^--\s*\n.*/m,
-          /^Best regards,.*/mi,
-          /^Sincerely,.*/mi,
-          /^Thanks,.*/mi,
-          /^Sent from my.*/mi
+          /^--\s*\n.*\z/m,
+          /^Best regards,.*\z/mi,
+          /^Sincerely,.*\z/mi,
+          /^Thanks,.*\z/mi,
+          /^Sent from my.*\z/mi
         ]
-        
         signature_patterns.each do |pattern|
-          if match = cleaned.match(pattern)
-            removed_sections << match[0]
+          if (m = cleaned.match(pattern))
+            removed_sections << m[0]
             cleaned.gsub!(pattern, "")
           end
         end
       end
-      
-      # Remove quoted text
+
+      # Quoted text (each line starting with >)
       if input["remove_quotes"]
-        quote_pattern = /^>+.*/
-        cleaned.gsub!(quote_pattern) do |match|
+        cleaned.gsub!(/^[ \t]*>.*$/m) do |match|
           removed_sections << match
           ""
         end
       end
-      
+
+      # Disclaimers (simple footer-like blocks)
+      if input["remove_disclaimers"]
+        cleaned.gsub!(/(This email.*confidential.*)$/im) do |match|
+          removed_sections << match
+          ""
+        end
+      end
+
       # Extract URLs if requested
       if input["extract_urls"]
-        url_pattern = /https?:\/\/[^\s]+/
-        extracted_urls = cleaned.scan(url_pattern)
+        extracted_urls = cleaned.scan(%r{https?://[^\s<>"'()]+})
       end
-      
-      # Normalize whitespace
+
+      # Normalize whitespace but keep paragraphs
       if input["normalize_whitespace"]
-        cleaned.gsub!(/\s+/, " ")
+        cleaned.gsub!(/[ \t]+/, " ")
+        cleaned.gsub!(/\n{3,}/, "\n\n")
         cleaned.strip!
       end
-      
-      # Extract main query (first paragraph after cleaning)
-      extracted_query = cleaned.split(/\n\n/)[0] || cleaned[0..200]
-      
+
+      # First non-empty paragraph (or first 200 chars fallback)
+      extracted_query = cleaned.split(/\n{2,}/).find { |p| p.strip.length.positive? } || cleaned[0, 200]
+
       {
         cleaned_text: cleaned,
         extracted_query: extracted_query,
@@ -599,45 +613,65 @@
         extracted_urls: extracted_urls,
         original_length: original_length,
         cleaned_length: cleaned.length,
-        reduction_percentage: ((1 - cleaned.length.to_f / original_length) * 100).round(2)
+        reduction_percentage: (original_length.zero? ? 0 : ((1 - cleaned.length.to_f / original_length) * 100)).round(2)
       }
     end,
-    
+
     compute_similarity: lambda do |input, connection|
       start_time = Time.now
-      
-      vector_a = input["vector_a"]
-      vector_b = input["vector_b"]
-      threshold = connection["similarity_threshold"].to_f
-      
-      # Normalize vectors if requested
-      if input["normalize"]
-        mag_a = Math.sqrt(vector_a.map { |x| x**2 }.sum)
-        mag_b = Math.sqrt(vector_b.map { |x| x**2 }.sum)
-        vector_a = vector_a.map { |x| x / mag_a } if mag_a > 0
-        vector_b = vector_b.map { |x| x / mag_b } if mag_b > 0
+
+      a = Array(input["vector_a"] || [])
+      b = Array(input["vector_b"] || [])
+      raise "Both vectors are required." if a.empty? || b.empty?
+      raise "Vectors must be the same length." unless a.length == b.length
+
+      normalize = input.key?("normalize") ? !!input["normalize"] : true
+      type = (input["similarity_type"] || "cosine").to_s
+      threshold = (connection["similarity_threshold"] || 0.7).to_f
+
+      if normalize
+        mag = Math.sqrt(a.sum { |x| x * x })
+        a = a.map { |x| mag.zero? ? 0.0 : x / mag }
+        mag = Math.sqrt(b.sum { |x| x * x })
+        b = b.map { |x| mag.zero? ? 0.0 : x / mag }
       end
-      
-      # Calculate cosine similarity
-      dot_product = vector_a.zip(vector_b).map { |a, b| a * b }.sum
-      mag_a = Math.sqrt(vector_a.map { |x| x**2 }.sum)
-      mag_b = Math.sqrt(vector_b.map { |x| x**2 }.sum)
-      
-      similarity = mag_a > 0 && mag_b > 0 ? dot_product / (mag_a * mag_b) : 0
-      
+
+      dot = a.zip(b).sum { |x, y| x * y }
+      mag_a = Math.sqrt(a.sum { |x| x * x })
+      mag_b = Math.sqrt(b.sum { |x| x * x })
+
+      score =
+        case type
+        when "cosine"
+          (mag_a > 0 && mag_b > 0) ? dot / (mag_a * mag_b) : 0.0
+        when "euclidean"
+          dist = Math.sqrt(a.zip(b).sum { |x, y| (x - y) ** 2 })
+          1.0 / (1.0 + dist) # map distance → similarity in (0,1]
+        when "dot_product"
+          dot # may be outside [-1,1] if not normalized
+        else
+          (mag_a > 0 && mag_b > 0) ? dot / (mag_a * mag_b) : 0.0
+        end
+
+      percent =
+        case type
+        when "cosine", "euclidean" then (score * 100).round(2)
+        else nil
+        end
+
       {
-        similarity_score: similarity.round(4),
-        similarity_percentage: (similarity * 100).round(2),
-        is_similar: similarity >= threshold,
-        similarity_type: input["similarity_type"] || "cosine",
+        similarity_score: score.round(6),
+        similarity_percentage: percent,
+        is_similar: score >= threshold,
+        similarity_type: type,
         computation_time_ms: ((Time.now - start_time) * 1000).round
       }
     end,
-    
+
     format_for_vertex_ai: lambda do |input|
-      embeddings = input["embeddings"]
-      batch_size = input["batch_size"] || 25
-      
+      embeddings = input["embeddings"] || []
+      batch_size = (input["batch_size"] || 25).to_i
+
       batches = []
       embeddings.each_slice(batch_size).with_index do |batch, index|
         formatted_batch = {
@@ -646,7 +680,7 @@
           datapoints: batch.map do |emb|
             {
               datapoint_id: emb["id"],
-              feature_vector: emb["vector"],
+              feature_vector: emb["vector"] || [],
               restricts: emb["metadata"] || {}
             }
           end,
@@ -654,7 +688,7 @@
         }
         batches << formatted_batch
       end
-      
+
       {
         formatted_batches: batches,
         total_batches: batches.length,
@@ -662,215 +696,189 @@
         index_endpoint: input["index_endpoint"]
       }
     end,
-    
+
     construct_rag_prompt: lambda do |input|
-      query = input["query"]
-      context_docs = input["context_documents"]
-      template = input["prompt_template"] || "standard"
-      max_length = input["max_context_length"] || 3000
-      include_metadata = input["include_metadata"] || false
+      query = input["query"] || ""
+      context_docs = Array(input["context_documents"] || [])
+      template = (input["prompt_template"] || "standard").to_s
+      max_length = (input["max_context_length"] || 3000).to_i
+      include_metadata = !!input["include_metadata"]
       system_instructions = input["system_instructions"]
-      
-      # Sort context by relevance
-      sorted_context = context_docs.sort_by { |doc| doc["relevance_score"] }.reverse
-      
-      # Build context string
+
+      sorted_context = context_docs.sort_by { |doc| (doc["relevance_score"] || 0) }.reverse
+
       context_parts = []
       total_tokens = 0
-      
+
       sorted_context.each do |doc|
-        doc_tokens = (doc["content"].length / 4.0).ceil
-        if total_tokens + doc_tokens <= max_length
-          context_part = doc["content"]
-          if include_metadata && doc["metadata"]
-            context_part += "\nMetadata: #{doc["metadata"].to_json}"
-          end
-          context_parts << context_part
-          total_tokens += doc_tokens
+        content = doc["content"].to_s
+        doc_tokens = (content.length / 4.0).ceil
+        break if doc_tokens > max_length && context_parts.empty?
+        next if total_tokens + doc_tokens > max_length
+
+        part = content.dup
+        if include_metadata && doc["metadata"]
+          part += "\nMetadata: #{doc["metadata"].to_json}"
         end
+        context_parts << part
+        total_tokens += doc_tokens
       end
-      
+
       context_text = context_parts.join("\n\n---\n\n")
-      
-      # Build prompt based on template
-      case template
-      when "standard"
-        prompt = "Context:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
-      when "customer_service"
-        prompt = "You are a customer service assistant. Use the following context to answer the customer's question.\n\nContext:\n#{context_text}\n\nCustomer Question: #{query}\n\nResponse:"
-      when "technical"
-        prompt = "You are a technical support specialist. Use the provided context to solve the technical issue.\n\nContext:\n#{context_text}\n\nTechnical Issue: #{query}\n\nSolution:"
-      when "sales"
-        prompt = "You are a sales representative. Use the context to address the sales inquiry.\n\nContext:\n#{context_text}\n\nSales Inquiry: #{query}\n\nResponse:"
-      else
-        prompt = "#{system_instructions}\n\nContext:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
-      end
-      
+
+      prompt =
+        case template
+        when "standard"
+          "Context:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
+        when "customer_service"
+          "You are a customer service assistant. Use the following context to answer the customer's question.\n\nContext:\n#{context_text}\n\nCustomer Question: #{query}\n\nResponse:"
+        when "technical"
+          "You are a technical support specialist. Use the provided context to solve the technical issue.\n\nContext:\n#{context_text}\n\nTechnical Issue: #{query}\n\nSolution:"
+        when "sales"
+          "You are a sales representative. Use the context to address the sales inquiry.\n\nContext:\n#{context_text}\n\nSales Inquiry: #{query}\n\nResponse:"
+        else
+          "#{system_instructions}\n\nContext:\n#{context_text}\n\nQuery: #{query}\n\nAnswer:"
+        end
+
       {
         formatted_prompt: prompt,
         token_count: (prompt.length / 4.0).ceil,
         context_used: context_parts.length,
         truncated: context_parts.length < sorted_context.length,
-        prompt_metadata: {
-          template: template,
-          context_docs_used: context_parts.length,
-          total_context_docs: sorted_context.length
-        }
+        prompt_metadata: { template: template, context_docs_used: context_parts.length, total_context_docs: sorted_context.length }
       }
     end,
-    
-    validate_response: lambda do |input, connection|
-      response = input["response_text"]
-      query = input["original_query"]
-      rules = input["validation_rules"] || []
-      min_confidence = input["min_confidence"] || 0.7
-      
+
+    validate_response: lambda do |input, _connection|
+      response = (input["response_text"] || "").to_s
+      query = (input["original_query"] || "").to_s
+      rules = Array(input["validation_rules"] || [])
+      min_confidence = (input["min_confidence"] || 0.7).to_f
+
       issues = []
       confidence = 1.0
-      
-      # Basic validation checks
-      if response.empty?
+
+      if response.strip.empty?
         issues << "Response is empty"
         confidence -= 0.5
-      end
-      
-      if response.length < 10
+      elsif response.length < 10
         issues << "Response is too short"
         confidence -= 0.3
       end
-      
-      # Check if response addresses the query
-      query_words = query.downcase.split(/\W+/)
-      response_words = response.downcase.split(/\W+/)
-      overlap = (query_words & response_words).length.to_f / query_words.length
-      
+
+      query_words = query.downcase.split(/\W+/).reject(&:empty?)
+      response_words = response.downcase.split(/\W+/).reject(&:empty?)
+      overlap = query_words.empty? ? 0.0 : ((query_words & response_words).length.to_f / query_words.length)
+
       if overlap < 0.1
         issues << "Response may not address the query"
         confidence -= 0.4
       end
-      
-      # Check for coherence
+
       if response.include?("...") || response.include?("incomplete")
         issues << "Response appears incomplete"
         confidence -= 0.2
       end
-      
-      # Apply custom rules
+
       rules.each do |rule|
         case rule["rule_type"]
         when "contains"
-          unless response.include?(rule["rule_value"])
+          unless response.include?(rule["rule_value"].to_s)
             issues << "Response does not contain required text: #{rule["rule_value"]}"
             confidence -= 0.3
           end
         when "not_contains"
-          if response.include?(rule["rule_value"])
+          if response.include?(rule["rule_value"].to_s)
             issues << "Response contains prohibited text: #{rule["rule_value"]}"
             confidence -= 0.3
           end
         end
       end
-      
+
       {
         is_valid: confidence >= min_confidence,
         confidence_score: confidence.round(2),
-        validation_results: {
-          query_overlap: overlap.round(2),
-          response_length: response.length,
-          word_count: response_words.length
-        },
+        validation_results: { query_overlap: overlap.round(2), response_length: response.length, word_count: response_words.length },
         issues_found: issues,
         requires_human_review: confidence < 0.5,
         suggested_improvements: issues.empty? ? [] : ["Review and improve response quality"]
       }
     end,
-    
+
     extract_metadata: lambda do |input|
-      content = input["document_content"]
-      file_path = input["file_path"]
-      extract_entities = input["extract_entities"] || true
-      generate_summary = input["generate_summary"] || true
-      
+      require "digest"
+
+      content = input["document_content"].to_s
+      file_path = input["file_path"].to_s
+      extract_entities = input.key?("extract_entities") ? !!input["extract_entities"] : true
+      generate_summary = input.key?("generate_summary") ? !!input["generate_summary"] : true
+
       start_time = Time.now
-      
-      # Basic metadata
-      word_count = content.split(/\s+/).length
+
+      word_count = content.split(/\s+/).reject(&:empty?).length
       char_count = content.length
       estimated_tokens = (content.length / 4.0).ceil
-      
-      # Language detection (simple heuristic)
-      language = if content.match?(/[àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]/i)
-                    "non-english"
-                  else
-                    "english"
-                  end
-      
-      # Generate summary (first 200 chars)
-      summary = generate_summary ? content[0..200] + "..." : ""
-      
-      # Extract key topics (simple keyword extraction)
+
+      language = content.match?(/[àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ]/i) ? "non-english" : "english"
+
+      summary = generate_summary ? (content[0, 200].to_s + (content.length > 200 ? "..." : "")) : ""
+
       key_topics = []
       if extract_entities
-        common_words = ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"]
-        words = content.downcase.split(/\W+/).reject { |w| w.length < 4 || common_words.include?(w) }
-        word_freq = words.each_with_object(Hash.new(0)) { |word, freq| freq[word] += 1 }
-        key_topics = word_freq.sort_by { |_, count| -count }.first(5).map(&:first)
+        common = %w[the a an and or but in on at to for of with by from is are was were be been being this that these those there here then than into out over under after before about as it its it's their them they our we you your he she his her him not will would can could should may might must also just more most other some such]
+        words = content.downcase.scan(/[a-z0-9\-]+/).reject { |w| w.length < 4 || common.include?(w) }
+        freq = words.each_with_object(Hash.new(0)) { |w, h| h[w] += 1 }
+        key_topics = freq.sort_by { |_, c| -c }.first(5).map(&:first)
       end
-      
-      # Entities (placeholder)
-      entities = {
-        people: [],
-        organizations: [],
-        locations: []
-      }
-      
+
+      file_hash = Digest::SHA256.hexdigest(content)
+      document_id = Digest::SHA1.hexdigest("#{file_path}|#{file_hash}")
+
       {
-        document_id: (file_path + content).hash.to_s,
-        file_hash: content.hash.to_s,
+        document_id: document_id,
+        file_hash: file_hash,
         word_count: word_count,
         character_count: char_count,
         estimated_tokens: estimated_tokens,
         language: language,
         summary: summary,
         key_topics: key_topics,
-        entities: entities,
+        entities: { people: [], organizations: [], locations: [] },
         created_at: Time.now.iso8601,
         processing_time_ms: ((Time.now - start_time) * 1000).round
       }
     end,
-    
+
     detect_changes: lambda do |input|
       current_hash = input["current_hash"]
       current_content = input["current_content"]
       previous_hash = input["previous_hash"]
       previous_content = input["previous_content"]
-      check_type = input["check_type"] || "hash"
-      
+      check_type = (input["check_type"] || "hash").to_s
+
       has_changed = current_hash != previous_hash
       change_type = "none"
       change_percentage = 0.0
       added = []
       removed = []
       modified = []
-      
+
       if has_changed
         change_type = "hash_changed"
-        
+
         if check_type == "content" && current_content && previous_content
-          # Simple diff
           current_lines = current_content.split("\n")
           previous_lines = previous_content.split("\n")
-          
+
           added = current_lines - previous_lines
           removed = previous_lines - current_lines
-          
+
           total_lines = [current_lines.length, previous_lines.length].max
-          change_percentage = ((added.length + removed.length).to_f / total_lines * 100).round(2) if total_lines > 0
-          
+          change_percentage = total_lines.zero? ? 0.0 : (((added.length + removed.length).to_f / total_lines) * 100).round(2)
           change_type = "content_changed"
         end
       end
-      
+
       {
         has_changed: has_changed,
         change_type: change_type,
@@ -881,50 +889,50 @@
         requires_reindexing: has_changed
       }
     end,
-    
+
     compute_metrics: lambda do |input|
-      data_points = input["data_points"]
-      
-      values = data_points.map { |dp| dp["value"] }.sort
-      
-      return { average: 0, median: 0, min: 0, max: 0, std_deviation: 0, percentile_95: 0, percentile_99: 0, total_count: 0, trend: "stable", anomalies_detected: [] } if values.empty?
-      
-      average = values.sum.to_f / values.length
+      data_points = Array(input["data_points"] || [])
+      values = data_points.map { |dp| dp["value"].to_f }.sort
+
+      return {
+        average: 0, median: 0, min: 0, max: 0,
+        std_deviation: 0, percentile_95: 0, percentile_99: 0,
+        total_count: 0, trend: "stable", anomalies_detected: []
+      } if values.empty?
+
+      avg = values.sum.to_f / values.length
       median = values.length.odd? ? values[values.length / 2] : (values[values.length / 2 - 1] + values[values.length / 2]) / 2.0
       min = values.first
       max = values.last
-      
-      # Standard deviation
-      variance = values.map { |v| (v - average)**2 }.sum / values.length
+
+      variance = values.map { |v| (v - avg)**2 }.sum / values.length
       std_dev = Math.sqrt(variance)
-      
-      # Percentiles
-      def percentile(arr, p)
+
+      percentile = lambda do |arr, p|
         return 0 if arr.empty?
         idx = (p / 100.0 * (arr.length - 1)).round
         arr[idx]
       end
-      
-      p95 = percentile(values, 95)
-      p99 = percentile(values, 99)
-      
-      # Trend (simple: compare first half vs second half)
+
+      p95 = percentile.call(values, 95)
+      p99 = percentile.call(values, 99)
+
       half = values.length / 2
-      first_half_avg = values[0..half-1].sum.to_f / half
-      second_half_avg = values[half..-1].sum.to_f / (values.length - half)
-      trend = if second_half_avg > first_half_avg * 1.1
-                "increasing"
-              elsif second_half_avg < first_half_avg * 0.9
-                "decreasing"
-              else
-                "stable"
-              end
-      
-      # Anomalies (simple: beyond 2 std dev)
-      anomalies = data_points.select { |dp| (dp["value"] - average).abs > 2 * std_dev }.map { |dp| { timestamp: dp["timestamp"], value: dp["value"] } }
-      
+      first_half_avg = values[0...half].empty? ? avg : (values[0...half].sum.to_f / [half, 1].max)
+      second_half_avg = values[half..-1].empty? ? avg : (values[half..-1].sum.to_f / [values.length - half, 1].max)
+      trend =
+        if second_half_avg > first_half_avg * 1.1
+          "increasing"
+        elsif second_half_avg < first_half_avg * 0.9
+          "decreasing"
+        else
+          "stable"
+        end
+
+      anomalies = data_points.select { |dp| (dp["value"].to_f - avg).abs > 2 * std_dev }.map { |dp| { timestamp: dp["timestamp"], value: dp["value"] } }
+
       {
-        average: average.round(2),
+        average: avg.round(2),
         median: median.round(2),
         min: min,
         max: max,
@@ -936,49 +944,44 @@
         anomalies_detected: anomalies
       }
     end,
-    
+
     calculate_optimal_batch: lambda do |input|
-      total_items = input["total_items"]
-      history = input["processing_history"] || []
-      target = input["optimization_target"] || "throughput"
-      max_batch = input["max_batch_size"] || 100
-      min_batch = input["min_batch_size"] || 10
-      
+      total_items = (input["total_items"] || 0).to_i
+      history = Array(input["processing_history"] || [])
+      target = (input["optimization_target"] || "throughput").to_s
+      max_batch = (input["max_batch_size"] || 100).to_i
+      min_batch = (input["min_batch_size"] || 10).to_i
+
       if history.empty?
-        optimal = [total_items / 10, max_batch].min
-        optimal = [optimal, min_batch].max
+        optimal = [[total_items / 10, max_batch].min, min_batch].max
         return {
           optimal_batch_size: optimal,
-          estimated_batches: (total_items.to_f / optimal).ceil,
-          estimated_processing_time: nil,
-          throughput_estimate: nil,
+          estimated_batches: (optimal.zero? ? 0 : (total_items.to_f / optimal).ceil),
+          estimated_processing_time: 0.0,
+          throughput_estimate: 0.0,
           confidence_score: 0.5,
           recommendation_reason: "No history available, using default calculation"
         }
       end
-      
-      # Simple optimization based on history
-      case target
-      when "throughput"
-        # Maximize items per second
-        best = history.max_by { |h| h["batch_size"].to_f / h["processing_time"] }
-        optimal = best["batch_size"]
-      when "latency"
-        # Minimize processing time per item
-        best = history.min_by { |h| h["processing_time"].to_f / h["batch_size"] }
-        optimal = best["batch_size"]
-      else
-        optimal = history.map { |h| h["batch_size"] }.sum / history.length
-      end
-      
-      optimal = [optimal, max_batch].min
-      optimal = [optimal, min_batch].max
-      
-      estimated_batches = (total_items.to_f / optimal).ceil
-      avg_time = history.map { |h| h["processing_time"] }.sum / history.length
+
+      optimal =
+        case target
+        when "throughput"
+          best = history.max_by { |h| h["batch_size"].to_f / [h["processing_time"].to_f, 0.0001].max }
+          best["batch_size"].to_i
+        when "latency"
+          best = history.min_by { |h| h["processing_time"].to_f / [h["batch_size"].to_f, 1].max }
+          best["batch_size"].to_i
+        else
+          (history.sum { |h| h["batch_size"].to_i } / [history.length, 1].max)
+        end
+
+      optimal = [[optimal, max_batch].min, min_batch].max
+      estimated_batches = (optimal.zero? ? 0 : (total_items.to_f / optimal).ceil)
+      avg_time = history.sum { |h| h["processing_time"].to_f } / [history.length, 1].max
       estimated_time = avg_time * estimated_batches
-      throughput = total_items.to_f / estimated_time
-      
+      throughput = estimated_time.zero? ? 0.0 : (total_items.to_f / estimated_time)
+
       {
         optimal_batch_size: optimal,
         estimated_batches: estimated_batches,
@@ -994,7 +997,6 @@
   # OBJECT DEFINITIONS (Schemas)
   # ==========================================
   object_definitions: {
-    
     chunk_object: {
       fields: lambda do
         [
@@ -1008,7 +1010,6 @@
         ]
       end
     },
-    
     embedding_object: {
       fields: lambda do
         [
@@ -1018,7 +1019,6 @@
         ]
       end
     },
-    
     metric_datapoint: {
       fields: lambda do
         [
@@ -1034,15 +1034,6 @@
   # PICK LISTS (Dropdown Options)
   # ==========================================
   pick_lists: {
-    
-    environments: lambda do
-      [
-        ["Development", "dev"],
-        ["Staging", "staging"],
-        ["Production", "prod"]
-      ]
-    end,
-    
     similarity_types: lambda do
       [
         ["Cosine Similarity", "cosine"],
@@ -1050,7 +1041,6 @@
         ["Dot Product", "dot_product"]
       ]
     end,
-    
     format_types: lambda do
       [
         ["JSON", "json"],
@@ -1058,7 +1048,6 @@
         ["CSV", "csv"]
       ]
     end,
-    
     prompt_templates: lambda do
       [
         ["Standard RAG", "standard"],
@@ -1068,7 +1057,6 @@
         ["Custom", "custom"]
       ]
     end,
-    
     file_types: lambda do
       [
         ["PDF", "pdf"],
@@ -1078,15 +1066,12 @@
         ["HTML", "html"]
       ]
     end,
-    
     check_types: lambda do
       [
         ["Hash Only", "hash"],
-        ["Content Diff", "content"],
-        ["Smart Diff", "smart"]
+        ["Content Diff", "content"]
       ]
     end,
-    
     metric_types: lambda do
       [
         ["Response Time", "response_time"],
@@ -1096,7 +1081,6 @@
         ["Throughput", "throughput"]
       ]
     end,
-    
     time_periods: lambda do
       [
         ["Minute", "minute"],
@@ -1105,7 +1089,6 @@
         ["Week", "week"]
       ]
     end,
-    
     optimization_targets: lambda do
       [
         ["Throughput", "throughput"],
