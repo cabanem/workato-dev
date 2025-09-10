@@ -74,9 +74,7 @@
   # ==========================================
   actions: {
     
-    # ------------------------------------------
     # 1. SMART CHUNK TEXT
-    # ------------------------------------------
     smart_chunk_text: {
       title: "Smart Chunk Text",
       subtitle: "Intelligently chunk text preserving context",
@@ -121,61 +119,23 @@
       end
     },
     
-    # ------------------------------------------
     # 2. CLEAN EMAIL TEXT
-    # ------------------------------------------
     clean_email_text: {
       title: "Clean Email Text",
       subtitle: "Preprocess email content for RAG",
       description: "Removes signatures, quotes, and normalizes email text",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "email_body",
-            label: "Email Body",
-            type: "string",
-            optional: false,
-            control_type: "text-area"
-          },
-          {
-            name: "remove_signatures",
-            label: "Remove Signatures",
-            type: "boolean",
-            optional: true,
-            default: true
-          },
-          {
-            name: "remove_quotes",
-            label: "Remove Quoted Text",
-            type: "boolean",
-            optional: true,
-            default: true
-          },
-          {
-            name: "remove_disclaimers",
-            label: "Remove Disclaimers",
-            type: "boolean",
-            optional: true,
-            default: true
-          },
-          {
-            name: "normalize_whitespace",
-            label: "Normalize Whitespace",
-            type: "boolean",
-            optional: true,
-            default: true
-          },
-          {
-            name: "extract_urls",
-            label: "Extract URLs",
-            type: "boolean",
-            optional: true,
-            default: false
-          }
+          { name: "email_body", label: "Email Body", type: "string", optional: false, control_type: "text-area" },
+          { name: "remove_signatures", label: "Remove Signatures", type: "boolean", optional: true, default: true },
+          { name: "remove_quotes", label: "Remove Quoted Text", type: "boolean", optional: true, default: true },
+          { name: "remove_disclaimers", label: "Remove Disclaimers", type: "boolean", optional: true, default: true },
+          { name: "normalize_whitespace", label: "Normalize Whitespace", type: "boolean", optional: true, default: true },
+          { name: "extract_urls", label: "Extract URLs", type: "boolean", optional: true, default: false }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "cleaned_text", type: "string" },
@@ -187,57 +147,27 @@
           { name: "reduction_percentage", type: "number" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:process_email_text, input)
       end
     },
-    
-    # ------------------------------------------
+
     # 3. CALCULATE SIMILARITY
-    # ------------------------------------------
     calculate_similarity: {
       title: "Calculate Vector Similarity",
-      subtitle: "Calculate cosine similarity between vectors",
+      subtitle: "Cosine / Euclidean / Dot product",
       description: "Computes similarity scores for vector embeddings",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "vector_a",
-            label: "Vector A",
-            type: "array",
-            of: "number",
-            optional: false,
-            hint: "First embedding vector"
-          },
-          {
-            name: "vector_b",
-            label: "Vector B",
-            type: "array",
-            of: "number",
-            optional: false,
-            hint: "Second embedding vector"
-          },
-          {
-            name: "similarity_type",
-            label: "Similarity Type",
-            type: "string",
-            optional: true,
-            default: "cosine",
-            control_type: "select",
-            pick_list: "similarity_types"
-          },
-          {
-            name: "normalize",
-            label: "Normalize Vectors",
-            type: "boolean",
-            optional: true,
-            default: true
-          }
+          { name: "vector_a", label: "Vector A", type: "array", of: "number", optional: false, hint: "First embedding vector" },
+          { name: "vector_b", label: "Vector B", type: "array", of: "number", optional: false, hint: "Second embedding vector" },
+          { name: "similarity_type", label: "Similarity Type", type: "string", optional: true, default: "cosine", control_type: "select", pick_list: "similarity_types" },
+          { name: "normalize", label: "Normalize Vectors", type: "boolean", optional: true, default: true }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "similarity_score", type: "number" },
@@ -247,20 +177,18 @@
           { name: "computation_time_ms", type: "integer" }
         ]
       end,
-      
+
       execute: lambda do |connection, input|
         call(:compute_similarity, input, connection)
       end
     },
     
-    # ------------------------------------------
     # 4. FORMAT EMBEDDINGS BATCH
-    # ------------------------------------------
     format_embeddings_batch: {
       title: "Format Embeddings for Vertex AI",
       subtitle: "Format embeddings for batch processing",
       description: "Prepares embedding data for Vertex AI Vector Search",
-      
+
       input_fields: lambda do
         [
           {
@@ -275,32 +203,12 @@
             ],
             optional: false
           },
-          {
-            name: "index_endpoint",
-            label: "Index Endpoint ID",
-            type: "string",
-            optional: false
-          },
-          {
-            name: "batch_size",
-            label: "Batch Size",
-            type: "integer",
-            optional: true,
-            default: 25,
-            hint: "Embeddings per batch"
-          },
-          {
-            name: "format_type",
-            label: "Format Type",
-            type: "string",
-            optional: true,
-            default: "json",
-            control_type: "select",
-            pick_list: "format_types"
-          }
+          { name: "index_endpoint", label: "Index Endpoint ID", type: "string", optional: false },
+          { name: "batch_size", label: "Batch Size", type: "integer", optional: true, default: 25, hint: "Embeddings per batch" },
+          { name: "format_type", label: "Format Type", type: "string", optional: true, default: "json", control_type: "select", pick_list: "format_types" }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           {
@@ -310,7 +218,16 @@
             properties: [
               { name: "batch_id", type: "string" },
               { name: "batch_number", type: "integer" },
-              { name: "datapoints", type: "array" },
+              {
+                name: "datapoints",
+                type: "array",
+                of: "object",
+                properties: [
+                  { name: "datapoint_id", type: "string" },
+                  { name: "feature_vector", type: "array", of: "number" },
+                  { name: "restricts", type: "object" }
+                ]
+              },
               { name: "size", type: "integer" }
             ]
           },
@@ -319,29 +236,21 @@
           { name: "index_endpoint", type: "string" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:format_for_vertex_ai, input)
       end
     },
     
-    # ------------------------------------------
     # 5. BUILD RAG PROMPT
-    # ------------------------------------------
     build_rag_prompt: {
       title: "Build RAG Prompt",
       subtitle: "Construct optimized RAG prompt",
       description: "Creates a prompt with context and query for LLM",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "query",
-            label: "User Query",
-            type: "string",
-            optional: false,
-            control_type: "text-area"
-          },
+          { name: "query", label: "User Query", type: "string", optional: false, control_type: "text-area" },
           {
             name: "context_documents",
             label: "Context Documents",
@@ -355,38 +264,13 @@
             ],
             optional: false
           },
-          {
-            name: "prompt_template",
-            label: "Prompt Template",
-            type: "string",
-            optional: true,
-            control_type: "select",
-            pick_list: "prompt_templates"
-          },
-          {
-            name: "max_context_length",
-            label: "Max Context Length",
-            type: "integer",
-            optional: true,
-            default: 3000
-          },
-          {
-            name: "include_metadata",
-            label: "Include Metadata",
-            type: "boolean",
-            optional: true,
-            default: false
-          },
-          {
-            name: "system_instructions",
-            label: "System Instructions",
-            type: "string",
-            optional: true,
-            control_type: "text-area"
-          }
+          { name: "prompt_template", label: "Prompt Template", type: "string", optional: true, control_type: "select", pick_list: "prompt_templates" },
+          { name: "max_context_length", label: "Max Context Length", type: "integer", optional: true, default: 3000 },
+          { name: "include_metadata", label: "Include Metadata", type: "boolean", optional: true, default: false },
+          { name: "system_instructions", label: "System Instructions", type: "string", optional: true, control_type: "text-area" }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "formatted_prompt", type: "string" },
@@ -396,42 +280,23 @@
           { name: "prompt_metadata", type: "object" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:construct_rag_prompt, input)
       end
     },
-    
-    # ------------------------------------------
+
     # 6. VALIDATE LLM RESPONSE
-    # ------------------------------------------
     validate_llm_response: {
       title: "Validate LLM Response",
       subtitle: "Validate and score LLM output",
       description: "Checks response quality and relevance",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "response_text",
-            label: "LLM Response",
-            type: "string",
-            optional: false,
-            control_type: "text-area"
-          },
-          {
-            name: "original_query",
-            label: "Original Query",
-            type: "string",
-            optional: false
-          },
-          {
-            name: "context_provided",
-            label: "Context Documents",
-            type: "array",
-            of: "string",
-            optional: true
-          },
+          { name: "response_text", label: "LLM Response", type: "string", optional: false, control_type: "text-area" },
+          { name: "original_query", label: "Original Query", type: "string", optional: false },
+          { name: "context_provided", label: "Context Documents", type: "array", of: "string", optional: true },
           {
             name: "validation_rules",
             label: "Validation Rules",
@@ -443,16 +308,10 @@
             ],
             optional: true
           },
-          {
-            name: "min_confidence",
-            label: "Minimum Confidence",
-            type: "number",
-            optional: true,
-            default: 0.7
-          }
+          { name: "min_confidence", label: "Minimum Confidence", type: "number", optional: true, default: 0.7 }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "is_valid", type: "boolean" },
@@ -463,60 +322,28 @@
           { name: "suggested_improvements", type: "array", of: "string" }
         ]
       end,
-      
+
       execute: lambda do |connection, input|
         call(:validate_response, input, connection)
       end
     },
-    
-    # ------------------------------------------
+
     # 7. GENERATE DOCUMENT METADATA
-    # ------------------------------------------
     generate_document_metadata: {
       title: "Generate Document Metadata",
       subtitle: "Extract metadata from documents",
       description: "Generates comprehensive metadata for document indexing",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "document_content",
-            label: "Document Content",
-            type: "string",
-            optional: false,
-            control_type: "text-area"
-          },
-          {
-            name: "file_path",
-            label: "File Path",
-            type: "string",
-            optional: false
-          },
-          {
-            name: "file_type",
-            label: "File Type",
-            type: "string",
-            optional: true,
-            control_type: "select",
-            pick_list: "file_types"
-          },
-          {
-            name: "extract_entities",
-            label: "Extract Entities",
-            type: "boolean",
-            optional: true,
-            default: true
-          },
-          {
-            name: "generate_summary",
-            label: "Generate Summary",
-            type: "boolean",
-            optional: true,
-            default: true
-          }
+          { name: "document_content", label: "Document Content", type: "string", optional: false, control_type: "text-area" },
+          { name: "file_path", label: "File Path", type: "string", optional: false },
+          { name: "file_type", label: "File Type", type: "string", optional: true, control_type: "select", pick_list: "file_types" },
+          { name: "extract_entities", label: "Extract Entities", type: "boolean", optional: true, default: true },
+          { name: "generate_summary", label: "Generate Summary", type: "boolean", optional: true, default: true }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "document_id", type: "string" },
@@ -532,60 +359,28 @@
           { name: "processing_time_ms", type: "integer" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:extract_metadata, input)
       end
     },
-    
-    # ------------------------------------------
+
     # 8. CHECK DOCUMENT CHANGES
-    # ------------------------------------------
     check_document_changes: {
       title: "Check Document Changes",
       subtitle: "Detect changes in documents",
       description: "Compares document versions to detect modifications",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "current_hash",
-            label: "Current Document Hash",
-            type: "string",
-            optional: false
-          },
-          {
-            name: "current_content",
-            label: "Current Content",
-            type: "string",
-            optional: true,
-            control_type: "text-area"
-          },
-          {
-            name: "previous_hash",
-            label: "Previous Document Hash",
-            type: "string",
-            optional: false
-          },
-          {
-            name: "previous_content",
-            label: "Previous Content",
-            type: "string",
-            optional: true,
-            control_type: "text-area"
-          },
-          {
-            name: "check_type",
-            label: "Check Type",
-            type: "string",
-            optional: true,
-            default: "hash",
-            control_type: "select",
-            pick_list: "check_types"
-          }
+          { name: "current_hash", label: "Current Document Hash", type: "string", optional: false },
+          { name: "current_content", label: "Current Content", type: "string", optional: true, control_type: "text-area" },
+          { name: "previous_hash", label: "Previous Document Hash", type: "string", optional: false },
+          { name: "previous_content", label: "Previous Content", type: "string", optional: true, control_type: "text-area" },
+          { name: "check_type", label: "Check Type", type: "string", optional: true, default: "hash", control_type: "select", pick_list: "check_types" }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "has_changed", type: "boolean" },
@@ -597,30 +392,21 @@
           { name: "requires_reindexing", type: "boolean" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:detect_changes, input)
       end
     },
-    
-    # ------------------------------------------
+
     # 9. CALCULATE METRICS
-    # ------------------------------------------
     calculate_metrics: {
       title: "Calculate Performance Metrics",
       subtitle: "Calculate system performance metrics",
       description: "Computes various performance and efficiency metrics",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "metric_type",
-            label: "Metric Type",
-            type: "string",
-            optional: false,
-            control_type: "select",
-            pick_list: "metric_types"
-          },
+          { name: "metric_type", label: "Metric Type", type: "string", optional: false, control_type: "select", pick_list: "metric_types" },
           {
             name: "data_points",
             label: "Data Points",
@@ -633,25 +419,11 @@
             ],
             optional: false
           },
-          {
-            name: "aggregation_period",
-            label: "Aggregation Period",
-            type: "string",
-            optional: true,
-            default: "hour",
-            control_type: "select",
-            pick_list: "time_periods"
-          },
-          {
-            name: "include_percentiles",
-            label: "Include Percentiles",
-            type: "boolean",
-            optional: true,
-            default: true
-          }
+          { name: "aggregation_period", label: "Aggregation Period", type: "string", optional: true, default: "hour", control_type: "select", pick_list: "time_periods" },
+          { name: "include_percentiles", label: "Include Percentiles", type: "boolean", optional: true, default: true }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "average", type: "number" },
@@ -666,28 +438,21 @@
           { name: "anomalies_detected", type: "array", of: "object" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:compute_metrics, input)
       end
     },
-    
-    # ------------------------------------------
+
     # 10. OPTIMIZE BATCH SIZE
-    # ------------------------------------------
     optimize_batch_size: {
       title: "Optimize Batch Size",
       subtitle: "Calculate optimal batch size for processing",
       description: "Determines optimal batch size based on performance data",
-      
+
       input_fields: lambda do
         [
-          {
-            name: "total_items",
-            label: "Total Items to Process",
-            type: "integer",
-            optional: false
-          },
+          { name: "total_items", label: "Total Items to Process", type: "integer", optional: false },
           {
             name: "processing_history",
             label: "Processing History",
@@ -701,32 +466,12 @@
             ],
             optional: true
           },
-          {
-            name: "optimization_target",
-            label: "Optimization Target",
-            type: "string",
-            optional: true,
-            default: "throughput",
-            control_type: "select",
-            pick_list: "optimization_targets"
-          },
-          {
-            name: "max_batch_size",
-            label: "Maximum Batch Size",
-            type: "integer",
-            optional: true,
-            default: 100
-          },
-          {
-            name: "min_batch_size",
-            label: "Minimum Batch Size",
-            type: "integer",
-            optional: true,
-            default: 10
-          }
+          { name: "optimization_target", label: "Optimization Target", type: "string", optional: true, default: "throughput", control_type: "select", pick_list: "optimization_targets" },
+          { name: "max_batch_size", label: "Maximum Batch Size", type: "integer", optional: true, default: 100 },
+          { name: "min_batch_size", label: "Minimum Batch Size", type: "integer", optional: true, default: 10 }
         ]
       end,
-      
+
       output_fields: lambda do
         [
           { name: "optimal_batch_size", type: "integer" },
@@ -737,8 +482,8 @@
           { name: "recommendation_reason", type: "string" }
         ]
       end,
-      
-      execute: lambda do |connection, input|
+
+      execute: lambda do |_connection, input|
         call(:calculate_optimal_batch, input)
       end
     }
