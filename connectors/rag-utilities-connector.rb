@@ -2,11 +2,13 @@
   title: "RAG Utilities",
   description: "Custom utility functions for RAG email response system",
   version: "1.0",
+  help: ->() { "Utility toolkit for building RAG-based email automation. Includes text processing, vector operations, and optimization tools." },
   
   # ==========================================
   # CONNECTION CONFIGURATION
   # ==========================================
   connection: {
+    help: ->() { "Configure default settings for text processing. These can be overridden in individual actions. Environment selection determines logging verbosity and processing limits." },
     fields: [
       {
         name: "environment",
@@ -73,20 +75,20 @@
   # ACTIONS
   # ==========================================
   actions: {
-    
     # 1. SMART CHUNK TEXT
     smart_chunk_text: {
       title: "Smart Chunk Text",
-      subtitle: "Intelligently chunk text preserving context",
-      description: "Splits text into chunks with smart boundaries and overlap",
+      subtitle: "Chunk Text: intelligently chunk text preserving context",
+      description: "Chunk text intelligently, preserving context",
+      help: 'Splits large documents into overlapping chunks while preserving sentence and paragraph boundaries. Essential for processing documents that exceed LLM context windows.',
 
       input_fields: lambda do
         [
           { name: "text", label: "Input Text", type: "string", optional: false, control_type: "text-area" },
           { name: "chunk_size", label: "Chunk Size (tokens)", type: "integer", optional: true, default: 1000, hint: "Maximum tokens per chunk" },
           { name: "chunk_overlap", label: "Chunk Overlap (tokens)", type: "integer", optional: true, default: 100, hint: "Token overlap between chunks" },
-          { name: "preserve_sentences", label: "Preserve Sentences", type: "boolean", optional: true, default: true, hint: "Don't break mid-sentence" },
-          { name: "preserve_paragraphs", label: "Preserve Paragraphs", type: "boolean", optional: true, default: false, hint: "Try to keep paragraphs intact" }
+          { name: "preserve_sentences", label: "Preserve Sentences", type: "boolean", optional: true, default: true, hint: "Don't break mid-sentence", help: "When enabled, avoids splitting text mid-sentence. Recommended for maintaining readability." },
+          { name: "preserve_paragraphs", label: "Preserve Paragraphs", type: "boolean", optional: true, default: false, hint: "Try to keep paragraphs intact", help: "Attempts to keep paragraphs together. Best for structured documents. May create uneven chunk sizes." }
         ]
       end,
 
@@ -122,12 +124,13 @@
     # 2. CLEAN EMAIL TEXT
     clean_email_text: {
       title: "Clean Email Text",
-      subtitle: "Preprocess email content for RAG",
-      description: "Removes signatures, quotes, and normalizes email text",
+      subtitle: "Clean email text with RAG Utilities",
+      description: "Clean email text for RAG processing",
+      help: "Removes signatures, quoted replies, and disclaimers from emails. Extracts the actual query for more focused RAG processing. Reduces noise and improves response relevance.",
 
       input_fields: lambda do
         [
-          { name: "email_body", label: "Email Body", type: "string", optional: false, control_type: "text-area" },
+          { name: "email_body", label: "Email Body", type: "string", optional: false, control_type: "text-area", hint: "Input text to process. Supports up to 1MB. For larger documents, pre-split into sections." },
           { name: "remove_signatures", label: "Remove Signatures", type: "boolean", optional: true, default: true },
           { name: "remove_quotes", label: "Remove Quoted Text", type: "boolean", optional: true, default: true },
           { name: "remove_disclaimers", label: "Remove Disclaimers", type: "boolean", optional: true, default: true },
@@ -156,8 +159,9 @@
     # 3. CALCULATE SIMILARITY
     calculate_similarity: {
       title: "Calculate Vector Similarity",
-      subtitle: "Cosine / Euclidean / Dot product",
-      description: "Computes similarity scores for vector embeddings",
+      subtitle: "Compute similarity scores for vector embeddings",
+      description: "Calculate vector similarity (Cosine / Euclidean / Dot product)",
+      help: "Compares two embedding vectors to determine semantic similarity. Use cosine for normalized embeddings, euclidean for distance-based matching.",
 
       input_fields: lambda do
         [
@@ -187,7 +191,8 @@
     format_embeddings_batch: {
       title: "Format Embeddings for Vertex AI",
       subtitle: "Format embeddings for batch processing",
-      description: "Prepares embedding data for Vertex AI Vector Search",
+      description: "Batch format embeddings for Vertex AI Vector Search",
+      help: "Prepares embedding data for bulk upload to Vertex AI Vector Search. Automatically handles batching and formatting requirements.",
 
       input_fields: lambda do
         [
@@ -245,8 +250,9 @@
     # 5. BUILD RAG PROMPT
     build_rag_prompt: {
       title: "Build RAG Prompt",
-      subtitle: "Construct optimized RAG prompt",
-      description: "Creates a prompt with context and query for LLM",
+      subtitle: "Creates a prompt with context and query for LLM",
+      description: "Construct an optimized RAG prompt with query and context.",
+      help: "Combines user query with retrieved context into an optimized LLM prompt. Automatically manages token limits and sorts context by relevance.",
 
       input_fields: lambda do
         [
@@ -291,6 +297,7 @@
       title: "Validate LLM Response",
       subtitle: "Validate and score LLM output",
       description: "Checks response quality and relevance",
+      help: "Checks if the generated response addresses the query and meets quality standards. Helps identify responses needing human review.",
 
       input_fields: lambda do
         [
@@ -333,6 +340,7 @@
       title: "Generate Document Metadata",
       subtitle: "Extract metadata from documents",
       description: "Generates comprehensive metadata for document indexing",
+      help: "Extracts searchable metadata from documents for better retrieval. Includes automatic summarization and topic extraction.",
 
       input_fields: lambda do
         [
@@ -370,6 +378,7 @@
       title: "Check Document Changes",
       subtitle: "Detect changes in documents",
       description: "Compares document versions to detect modifications",
+      help: "Detects if a document has been modified since last processing. Use to trigger re-indexing only when necessary.",
 
       input_fields: lambda do
         [
@@ -403,6 +412,7 @@
       title: "Calculate Performance Metrics",
       subtitle: "Calculate system performance metrics",
       description: "Computes various performance and efficiency metrics",
+      help: "Analyzes performance data to identify trends and anomalies. Supports capacity planning and optimization decisions.",
 
       input_fields: lambda do
         [
@@ -449,6 +459,7 @@
       title: "Optimize Batch Size",
       subtitle: "Calculate optimal batch size for processing",
       description: "Determines optimal batch size based on performance data",
+      help: "Determines ideal batch size based on historical performance. Balances throughput and resource usage.",
 
       input_fields: lambda do
         [
